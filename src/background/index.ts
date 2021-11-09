@@ -1,4 +1,5 @@
 const MAX_TAB_COUNT = 20;
+const MIN_TAB_COUNT = 15;
 const TAB_DATA_KEY = "tab_data";
 let all_tabs: { title: string, url: string, window_id?: number, tab_id?: number }[] = [];
 let auto_removed_tabs = [];
@@ -8,11 +9,13 @@ function tab_open(tab) {
     for (let i = all_tabs.length - 1; i >= 0; i--) {
         if (all_tabs[i].url !== tab.url) continue;
         if (all_tabs[i].window_id === undefined) {
-            let [current] = all_tabs.splice(i, 1);
-            console.log("current", current);
-            current.window_id = tab.windowId;
-            current.tab_id = tab.id;
-            all_tabs.push(current);
+            console.log("current", all_tabs[i]);
+            all_tabs[i].window_id = tab.windowId;
+            all_tabs[i].tab_id = tab.id;
+            if (tab.active) {
+                let [current] = all_tabs.splice(i, 1);
+                all_tabs.push(current);
+            }
             return;
         }
     }
@@ -35,9 +38,11 @@ function tab_open(tab) {
             auto_removed_tabs.push(tab.id);
             chrome.tabs.remove(tab.id);
             let index = all_tabs.findIndex(({tab_id}) => tab_id === tab.id);
-            console.debug(index);
-            all_tabs[index].window_id = undefined;
-            all_tabs[index].tab_id = undefined;
+            if (index >= 0) {
+                console.debug(index);
+                all_tabs[index].window_id = undefined;
+                all_tabs[index].tab_id = undefined;
+            }
         }
     });
 }
@@ -47,7 +52,7 @@ function tab_open(tab) {
     if (Array.isArray(tab_data)) all_tabs = all_tabs.concat(tab_data.map(({title, url}) => {
         return {title, url};
     }));
-    let all_windows = await new Promise(resolve => chrome.windows.getAll(resolve));
+    let all_windows: chrome.windows.Window[] = await new Promise(resolve => chrome.windows.getAll({windowTypes: ["normal"]}, resolve));
     console.debug(all_windows);
     console.log("all_windows", all_windows);
     for (let window of all_windows) {
@@ -72,10 +77,15 @@ chrome.tabs.onActivated.addListener(activeInfo => {
 });
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     let index = all_tabs.findIndex(({tab_id}) => tab_id == tabId);
-    let [current] = all_tabs.splice(index, 1);
-    if (changeInfo.url !== undefined) current.url = changeInfo.url;
-    if (changeInfo.title !== undefined) current.title = changeInfo.title;
-    all_tabs.push(current);
+    if (index >= 0) {
+        if (changeInfo.url !== undefined) all_tabs[index].url = changeInfo.url;
+        if (changeInfo.title !== undefined) all_tabs[index].title = changeInfo.title;
+    } else {
+        let current = {url: "", title: ""};
+        if (changeInfo.url !== undefined) current.url = changeInfo.url;
+        if (changeInfo.title !== undefined) current.title = changeInfo.title;
+        all_tabs.push(current);
+    }
     console.log("all_tabs", all_tabs);
     console.log("tab updated", tabId, changeInfo, tab)
 });
@@ -87,15 +97,15 @@ chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
         auto_removed_tabs.splice(index, 1);
         return;
     }
-    index = all_tabs.findIndex(({tab_id}) => tab_id === tabId);
+    index = all_tabs.findIndex((tab) => tab.tab_id === tabId);
     all_tabs.splice(index, 1);
     console.log("all_tabs.length", all_tabs.length);
     if (removeInfo.isWindowClosing) return;
-    chrome.windows.get(removeInfo.windowId, {populate: true}, window => {
+    chrome.windows.get(removeInfo.windowId, {populate: true, windowTypes: ["normal"]}, window => {
         if (window === undefined) return;
-        if (window.tabs.length >= MAX_TAB_COUNT) return;
+        if (window.tabs.length >= MIN_TAB_COUNT) return;
         let j = all_tabs.length - 1;
-        for (let i = 0; i < MAX_TAB_COUNT - window.tabs.length; i++) {
+        for (let i = 0; i < MIN_TAB_COUNT - window.tabs.length; i++) {
             for (; j >= 0; j--) {
                 if (all_tabs[j].tab_id === undefined) {
                     let [t] = all_tabs.splice(j, 1);
