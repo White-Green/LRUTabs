@@ -81,7 +81,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
         if (changeInfo.url !== undefined) all_tabs[index].url = changeInfo.url;
         if (changeInfo.title !== undefined) all_tabs[index].title = changeInfo.title;
     } else {
-        let current = {url: "", title: ""};
+        let current: (typeof all_tabs)[number] = {url: "", title: "", tab_id: tab.id, window_id: tab.windowId};
         if (changeInfo.url !== undefined) current.url = changeInfo.url;
         if (changeInfo.title !== undefined) current.title = changeInfo.title;
         all_tabs.push(current);
