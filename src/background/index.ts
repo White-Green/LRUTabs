@@ -1,5 +1,4 @@
 const MAX_TAB_COUNT = 20;
-const MIN_TAB_COUNT = 15;
 const TAB_DATA_KEY = "tab_data";
 let all_tabs: { title: string, url: string, window_id?: number, tab_id?: number }[] = [];
 let auto_removed_tabs = [];
@@ -99,23 +98,6 @@ chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
     }
     index = all_tabs.findIndex((tab) => tab.tab_id === tabId);
     all_tabs.splice(index, 1);
-    console.log("all_tabs.length", all_tabs.length);
-    if (removeInfo.isWindowClosing) return;
-    chrome.windows.get(removeInfo.windowId, {populate: true, windowTypes: ["normal"]}, window => {
-        if (window === undefined) return;
-        if (window.tabs.length >= MIN_TAB_COUNT) return;
-        let j = all_tabs.length - 1;
-        for (let i = 0; i < MIN_TAB_COUNT - window.tabs.length; i++) {
-            for (; j >= 0; j--) {
-                if (all_tabs[j].tab_id === undefined) {
-                    let [t] = all_tabs.splice(j, 1);
-                    chrome.tabs.create({windowId: removeInfo.windowId, url: t.url, active: false});
-                    break;
-                }
-            }
-            j--;
-        }
-    });
     console.log("tab removed", tabId, removeInfo, all_tabs);
 })
 chrome.runtime.onInstalled.addListener((reason) => {
