@@ -1,19 +1,17 @@
 {
   "name": "LRU Tabs",
-  "description": "Build an Extension!",
+  "description": "Automatically manage tabs using an LRU strategy.",
   "version": "0.1",
+  "manifest_version": 3,
   "permissions": [
     "tabs",
     "storage",
     "sessions"
   ],
   "background": {
-    "scripts": [
-      "background/index.ts"
-    ]
+    "service_worker": "background/index.ts"
   },
-  "browser_action": {
+  "action": {
     "default_popup": "popup.html"
-  },
-  "manifest_version": 2
+  }
 }
