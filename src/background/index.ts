@@ -1,122 +1,126 @@
 const MAX_TAB_COUNT = 20;
-const TAB_DATA_KEY = "tab_data";
-let all_tabs: { title: string, url: string, window_id?: number, tab_id?: number }[] = [];
-let auto_removed_tabs = [];
+const TAB_DATA_KEY = 'tab_data';
 
-function tab_open(tab) {
-    console.log("tab_open all_tabs", all_tabs, tab);
-    for (let i = all_tabs.length - 1; i >= 0; i--) {
-        if (all_tabs[i].url !== tab.url) continue;
-        if (all_tabs[i].window_id === undefined) {
-            console.log("current", all_tabs[i]);
-            all_tabs[i].window_id = tab.windowId;
-            all_tabs[i].tab_id = tab.id;
-            if (tab.active) {
-                let [current] = all_tabs.splice(i, 1);
-                all_tabs.push(current);
-            }
-            return;
-        }
-    }
-    all_tabs.push({url: tab.url, title: tab.title, window_id: tab.windowId, tab_id: tab.id});
-    chrome.windows.get(tab.windowId, {populate: true}, window => {
-        console.debug(window);
-        console.debug(window.tabs);
-        if (window.tabs.length <= MAX_TAB_COUNT) return;
-        let tabs = [...window.tabs];
-        tabs.sort((a, b) => {
-            for (let i = all_tabs.length - 1; i >= 0; i--) {
-                if (all_tabs[i].tab_id === a.id) return -1;
-                if (all_tabs[i].tab_id === b.id) return 1;
-            }
-            return 0;
-        });
-        console.debug(tabs);
-        console.debug(all_tabs);
-        for (let tab of tabs.slice(MAX_TAB_COUNT)) {
-            auto_removed_tabs.push(tab.id);
-            chrome.tabs.remove(tab.id);
-            let index = all_tabs.findIndex(({tab_id}) => tab_id === tab.id);
-            if (index >= 0) {
-                console.debug(index);
-                all_tabs[index].window_id = undefined;
-                all_tabs[index].tab_id = undefined;
-            }
-        }
-    });
+interface TabInfo {
+  title: string;
+  url: string;
+  window_id?: number;
+  tab_id?: number;
 }
 
-(async () => {
-    let {tab_data} = await new Promise(resolve => chrome.storage.local.get(TAB_DATA_KEY, resolve));
-    if (Array.isArray(tab_data)) all_tabs = all_tabs.concat(tab_data.map(({title, url}) => {
-        return {title, url};
-    }));
-    let all_windows: chrome.windows.Window[] = await new Promise(resolve => chrome.windows.getAll({windowTypes: ["normal"]}, resolve));
-    console.debug(all_windows);
-    console.log("all_windows", all_windows);
-    for (let window of all_windows) {
-        console.log("window", window);
-        chrome.windows.get(window.id, {populate: true, windowTypes: ['normal']}, (window) => {
-            if (window === undefined) return;
-            console.log("window", window);
-            for (let tab of window.tabs) {
-                console.log("tab", tab);
-                tab_open(tab);
-            }
-        });
-    }
-})();
+let allTabs: TabInfo[] = [];
+let autoRemoved: number[] = [];
 
-chrome.windows.onCreated.addListener((window, filters) => console.log("window created", window, filters));
+function saveTabs() {
+  chrome.storage.local.set({ [TAB_DATA_KEY]: allTabs });
+}
+
+function handleTabOpen(tab: chrome.tabs.Tab) {
+  for (let i = allTabs.length - 1; i >= 0; i--) {
+    if (allTabs[i].url !== tab.url) continue;
+    if (allTabs[i].window_id === undefined) {
+      allTabs[i].window_id = tab.windowId;
+      allTabs[i].tab_id = tab.id;
+      if (tab.active) {
+        const [cur] = allTabs.splice(i, 1);
+        allTabs.push(cur);
+      }
+      saveTabs();
+      return;
+    }
+  }
+
+  allTabs.push({ url: tab.url!, title: tab.title || tab.url!, window_id: tab.windowId, tab_id: tab.id });
+  chrome.windows.get(tab.windowId, { populate: true }, window => {
+    if (!window?.tabs) return;
+    if (window.tabs.length <= MAX_TAB_COUNT) return;
+    const tabs = [...window.tabs];
+    tabs.sort((a, b) => {
+      for (let i = allTabs.length - 1; i >= 0; i--) {
+        if (allTabs[i].tab_id === a.id) return -1;
+        if (allTabs[i].tab_id === b.id) return 1;
+      }
+      return 0;
+    });
+    for (const t of tabs.slice(MAX_TAB_COUNT)) {
+      autoRemoved.push(t.id!);
+      chrome.tabs.remove(t.id!);
+      const index = allTabs.findIndex(({ tab_id }) => tab_id === t.id);
+      if (index >= 0) {
+        allTabs[index].window_id = undefined;
+        allTabs[index].tab_id = undefined;
+      }
+    }
+    saveTabs();
+  });
+}
+
+async function init() {
+  const { [TAB_DATA_KEY]: tabData } = await chrome.storage.local.get(TAB_DATA_KEY);
+  if (Array.isArray(tabData)) {
+    allTabs = tabData.map(({ title, url }: TabInfo) => ({ title, url }));
+  }
+  const windows = await chrome.windows.getAll({ windowTypes: ['normal'], populate: true });
+  for (const win of windows) {
+    for (const tab of win.tabs || []) {
+      handleTabOpen(tab);
+    }
+  }
+  saveTabs();
+}
+
+chrome.runtime.onInstalled.addListener(init);
+chrome.runtime.onStartup.addListener(init);
+init();
+
 chrome.tabs.onActivated.addListener(activeInfo => {
-    let index = all_tabs.findIndex(({tab_id}) => tab_id === activeInfo.tabId);
-    let [current] = all_tabs.splice(index, 1);
-    all_tabs.push(current);
-    console.log("tab activated", activeInfo)
+  const index = allTabs.findIndex(({ tab_id }) => tab_id === activeInfo.tabId);
+  if (index >= 0) {
+    const [cur] = allTabs.splice(index, 1);
+    allTabs.push(cur);
+    saveTabs();
+  }
 });
+
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-    let index = all_tabs.findIndex(({tab_id}) => tab_id == tabId);
-    if (index >= 0) {
-        if (changeInfo.url !== undefined) all_tabs[index].url = changeInfo.url;
-        if (changeInfo.title !== undefined) all_tabs[index].title = changeInfo.title;
-    } else {
-        let current: (typeof all_tabs)[number] = {url: "", title: "", tab_id: tab.id, window_id: tab.windowId};
-        if (changeInfo.url !== undefined) current.url = changeInfo.url;
-        if (changeInfo.title !== undefined) current.title = changeInfo.title;
-        all_tabs.push(current);
-    }
-    console.log("all_tabs", all_tabs);
-    console.log("tab updated", tabId, changeInfo, tab)
+  let index = allTabs.findIndex(({ tab_id }) => tab_id === tabId);
+  if (index >= 0) {
+    if (changeInfo.url !== undefined) allTabs[index].url = changeInfo.url;
+    if (changeInfo.title !== undefined) allTabs[index].title = changeInfo.title!;
+  } else {
+    const current: TabInfo = { url: changeInfo.url || '', title: changeInfo.title || '', tab_id: tab.id, window_id: tab.windowId };
+    allTabs.push(current);
+  }
+  saveTabs();
 });
-chrome.tabs.onMoved.addListener((tabId, moveInfo) => console.log("tab moved", tabId, moveInfo));
-chrome.tabs.onCreated.addListener(tab_open);
+
+chrome.tabs.onCreated.addListener(handleTabOpen);
+
 chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
-    let index = auto_removed_tabs.indexOf(tabId);
-    if (index >= 0) {
-        auto_removed_tabs.splice(index, 1);
-        return;
-    }
-    index = all_tabs.findIndex((tab) => tab.tab_id === tabId);
-    all_tabs.splice(index, 1);
-    console.log("tab removed", tabId, removeInfo, all_tabs);
-})
-chrome.runtime.onInstalled.addListener((reason) => {
-    console.log(reason);
+  const idx = autoRemoved.indexOf(tabId);
+  if (idx >= 0) {
+    autoRemoved.splice(idx, 1);
+    return;
+  }
+  const index = allTabs.findIndex(t => t.tab_id === tabId);
+  if (index >= 0) allTabs.splice(index, 1);
+  saveTabs();
 });
 
 chrome.runtime.onMessage.addListener(message => {
-    console.log(message);
-    if ("move" in message) {
-        const index = message.move;
-        const [tab] = all_tabs.splice(index, 1);
-        chrome.windows.getCurrent(window => chrome.tabs.create({windowId: window.id, url: tab.url, active: true}));
-    }
-    if ("remove" in message) {
-        const index = message.remove;
-        all_tabs.splice(index, 1);
-    }
-})
+  if ('move' in message) {
+    const index = message.move as number;
+    const [tab] = allTabs.splice(index, 1);
+    chrome.windows.getCurrent(window => {
+      chrome.tabs.create({ windowId: window.id, url: tab.url, active: true });
+    });
+    saveTabs();
+  }
+  if ('remove' in message) {
+    const index = message.remove as number;
+    allTabs.splice(index, 1);
+    saveTabs();
+  }
+});
 
-setInterval(() => {
-    chrome.storage.local.set({tab_data: all_tabs});
-}, 500);
+export {}; // ensure this file is treated as a module
